@@ -4,12 +4,26 @@ import pino from 'pino';
 import fs from 'fs';
 import process from 'process';
 import os from 'os';
+import http from 'http'; // Ditambahkan untuk mencegah Railway "Stopping Container"
 
 // Import Commands (Sistem Modular Sederhana)
 import handleAiCommand from './src/commands/ai.js';
 import handleStickerCommand from './src/commands/sticker.js';
 
 const logger = pino({ level: 'silent' }); 
+
+// ==========================================
+// KEEPALIVE SERVER (MENCEGAH RAILWAY STOPPING CONTAINER)
+// ==========================================
+const port = process.env.PORT || 3000;
+const server = http.createServer((req, res) => {
+    res.writeHead(200, { 'Content-Type': 'text/plain' });
+    res.end('WhatsApp Bot is Alive and Running!\n');
+});
+server.listen(port, () => {
+    console.log(`🌐 Keep-Alive Server berjalan di port ${port}`);
+});
+// ==========================================
 
 // ==========================================
 // ANTI-CRASH HANDLER (Diperkuat)
@@ -135,7 +149,7 @@ async function connectToWhatsApp() {
                 console.log(`🔑 KODE PAIRING ANDA: ${code}`);
                 console.log(`====================================================`);
                 console.log(`Cara Login:`);
-                console.log(`1. Buka WhatsApp di HP Anda (Nomor Bos).`);
+                console.log(`1. Buka WhatsApp di HP Anda (Nomor Bot).`);
                 console.log(`2. Ketuk ikon titik tiga (Opsi lainnya) > Perangkat Tertaut.`);
                 console.log(`3. Ketuk 'Tautkan Perangkat'.`);
                 console.log(`4. Pilih 'Tautkan dengan nomor telepon saja'.`);
@@ -157,7 +171,7 @@ async function connectToWhatsApp() {
             console.log(`Koneksi terputus. Status Code: ${statusCode}. Reconnecting: ${shouldReconnect}`);
             
             if (shouldReconnect) {
-                // JEDA 3 DETIK (Mencegah Crash Loop / Stopping Container di Railway)
+                // JEDA 3 DETIK (Mencegah Crash Loop)
                 setTimeout(() => connectToWhatsApp(), 3000);
             } else {
                 // JIKA TERDETEKSI LOGOUT MANUAL (Status 401 / loggedOut)
