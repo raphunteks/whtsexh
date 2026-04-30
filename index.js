@@ -3,53 +3,83 @@ import { Boom } from '@hapi/boom';
 import pino from 'pino';
 import fs from 'fs';
 import process from 'process';
-import os from 'os'; // Modul OS ditambahkan untuk membaca spesifikasi server
+import os from 'os';
 
 // Import Commands (Sistem Modular Sederhana)
 import handleAiCommand from './src/commands/ai.js';
 import handleStickerCommand from './src/commands/sticker.js';
 
-// Matikan log bawaan Baileys agar terminal Railway tidak spam error MAC
 const logger = pino({ level: 'silent' }); 
 
 // ==========================================
-// ANTI-CRASH HANDLER (Mencegah bot mati karena Bad MAC)
+// ANTI-CRASH HANDLER
 // ==========================================
 process.on('uncaughtException', function (err) {
     let e = String(err);
-    if (e.includes('conflict')) return;
-    if (e.includes('Socket connection timeout')) return;
-    if (e.includes('not-authorized')) return;
-    if (e.includes('already-exists')) return;
-    if (e.includes('rate-overlimit')) return;
-    if (e.includes('Connection Closed')) return;
-    if (e.includes('Timed Out')) return;
-    if (e.includes('Value not found')) return;
-    if (e.includes('Bad MAC')) return console.log('Terjadi Error Bad MAC (Abaikan saja)');
+    if (e.includes('conflict') || e.includes('timeout') || e.includes('not-authorized') || e.includes('Bad MAC')) return;
     console.log('Caught exception: ', err);
 });
 
 process.on('unhandledRejection', function (reason, p) {
     let e = String(reason);
-    if (e.includes('conflict')) return;
-    if (e.includes('Socket connection timeout')) return;
-    if (e.includes('not-authorized')) return;
-    if (e.includes('already-exists')) return;
-    if (e.includes('rate-overlimit')) return;
-    if (e.includes('Connection Closed')) return;
-    if (e.includes('Timed Out')) return;
-    if (e.includes('Value not found')) return;
-    if (e.includes('Bad MAC')) return console.log('Terjadi Error Bad MAC (Abaikan saja)');
+    if (e.includes('conflict') || e.includes('timeout') || e.includes('not-authorized') || e.includes('Bad MAC')) return;
     console.log('Unhandled Rejection at: Promise ', p, ' reason: ', reason);
 });
 // ==========================================
 
 // ==========================================
-// PENGATURAN PAIRING CODE
+// PENGATURAN BOT & SISTEM SETTING
 // ==========================================
-// NOMOR HP BOT ANDA SUDAH DIPERBARUI DI SINI
 const phoneNumber = "6285338922586"; 
 const usePairingCode = true;
+const botStartTime = new Date(); // Mencatat waktu script dijalankan
+
+// Sistem Database Setting Sederhana (disimpan di folder session agar persisten di Railway)
+const settingsFile = './session/settings.json';
+let botSettings = { welcome: true, leave: true };
+
+// Buat folder session jika belum ada
+if (!fs.existsSync('./session')) {
+    fs.mkdirSync('./session', { recursive: true });
+}
+
+// Load setting jika file sudah ada
+if (fs.existsSync(settingsFile)) {
+    try {
+        botSettings = JSON.parse(fs.readFileSync(settingsFile, 'utf-8'));
+    } catch (e) {
+        console.error('Gagal membaca settings.json, menggunakan default.');
+    }
+}
+
+// Fungsi untuk menyimpan perubahan setting
+function saveSettings() {
+    fs.writeFileSync(settingsFile, JSON.stringify(botSettings, null, 2));
+}
+
+// Helper untuk format WITA & Relative Time
+function formatWITA(dateObj) {
+    return new Intl.DateTimeFormat('en-US', {
+        timeZone: 'Asia/Makassar',
+        weekday: 'long',
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric',
+        hour: 'numeric',
+        minute: 'numeric',
+        hour12: true
+    }).format(dateObj);
+}
+
+function getRelativeTime(seconds) {
+    const m = Math.floor(seconds / 60);
+    const h = Math.floor(seconds / 3600);
+    const d = Math.floor(seconds / 86400);
+    if (d > 0) return `${d} days ago`;
+    if (h > 0) return `${h} hours ago`;
+    if (m > 0) return `${m} minutes ago`;
+    return `${Math.floor(seconds)} seconds ago`;
+}
 // ==========================================
 
 async function connectToWhatsApp() {
@@ -66,13 +96,10 @@ async function connectToWhatsApp() {
         printQRInTerminal: !usePairingCode,
         auth: {
             creds: state.creds,
-            // Optimasi key store untuk mencegah Bad MAC berulang
             keys: makeCacheableSignalKeyStore(state.keys, logger),
         },
-        // Gunakan Ubuntu untuk Railway agar lebih stabil saat pairing
         browser: Browsers.ubuntu('Chrome'), 
         generateHighQualityLinkPreview: true,
-        // Menonaktifkan sync history penuh yang sering menyebabkan MAC error di awal
         syncFullHistory: false,
         markOnlineOnConnect: true,
         getMessage: async (key) => {
@@ -80,20 +107,12 @@ async function connectToWhatsApp() {
         }
     });
 
-    // MEMINTA PAIRING CODE JIKA BELUM LOGIN
     if (usePairingCode && !sock.authState.creds.registered) {
         setTimeout(async () => {
             try {
                 const code = await sock.requestPairingCode(phoneNumber);
                 console.log(`\n====================================================`);
                 console.log(`🔑 KODE PAIRING ANDA: ${code}`);
-                console.log(`====================================================`);
-                console.log(`Cara Login:`);
-                console.log(`1. Buka WhatsApp di HP Anda (Nomor Bot).`);
-                console.log(`2. Ketuk ikon titik tiga (Opsi lainnya) > Perangkat Tertaut.`);
-                console.log(`3. Ketuk 'Tautkan Perangkat'.`);
-                console.log(`4. Pilih 'Tautkan dengan nomor telepon saja'.`);
-                console.log(`5. Masukkan kode 8 digit di atas.`);
                 console.log(`====================================================\n`);
             } catch (err) {
                 console.error('Gagal meminta kode pairing:', err);
@@ -101,25 +120,17 @@ async function connectToWhatsApp() {
         }, 3000);
     }
 
-    // Event: Koneksi Update
     sock.ev.on('connection.update', (update) => {
         const { connection, lastDisconnect } = update;
-
         if (connection === 'close') {
             const shouldReconnect = (lastDisconnect.error instanceof Boom)?.output?.statusCode !== DisconnectReason.loggedOut;
-            console.log('Koneksi terputus karena:', lastDisconnect.error?.message || lastDisconnect.error, ', reconnecting:', shouldReconnect);
-            
-            if (shouldReconnect) {
-                connectToWhatsApp();
-            } else {
-                console.log('❌ Sesi telah logout. Silakan hapus folder "session" dan restart.');
-            }
+            console.log('Koneksi terputus, reconnecting:', shouldReconnect);
+            if (shouldReconnect) connectToWhatsApp();
         } else if (connection === 'open') {
             console.log('✅ Bot berhasil terhubung ke WhatsApp!');
         }
     });
 
-    // Event: Menyimpan Kredensial Sesi
     sock.ev.on('creds.update', saveCreds);
 
     // ==========================================
@@ -140,25 +151,15 @@ async function connectToWhatsApp() {
                     ppUrl = 'https://upload.wikimedia.org/wikipedia/commons/thumb/2/2c/Default_pfp.svg/1200px-Default_pfp.svg.png';
                 }
 
-                if (action === 'add') {
+                // Cek status setting sebelum mengirim Welcome
+                if (action === 'add' && botSettings.welcome) {
                     const welcomeText = `Halo @${participant.split('@')[0]}! 👋\n\nSelamat datang di grup *${groupName}*.\nJangan lupa perkenalkan diri dan baca deskripsi grup ya!`;
-                    
-                    await sock.sendMessage(id, { 
-                        image: { url: ppUrl }, 
-                        caption: welcomeText, 
-                        mentions: [participant] 
-                    });
-                    console.log(`[GROUP] Member baru bergabung: ${participant} di grup ${groupName}`);
-
-                } else if (action === 'remove') {
+                    await sock.sendMessage(id, { image: { url: ppUrl }, caption: welcomeText, mentions: [participant] });
+                } 
+                // Cek status setting sebelum mengirim Leave
+                else if (action === 'remove' && botSettings.leave) {
                     const leaveText = `Selamat tinggal @${participant.split('@')[0]} 👋\n\nSemoga sukses selalu di luar sana.`;
-                    
-                    await sock.sendMessage(id, { 
-                        image: { url: ppUrl }, 
-                        caption: leaveText, 
-                        mentions: [participant] 
-                    });
-                    console.log(`[GROUP] Member keluar: ${participant} dari grup ${groupName}`);
+                    await sock.sendMessage(id, { image: { url: ppUrl }, caption: leaveText, mentions: [participant] });
                 }
             }
         } catch (error) {
@@ -193,86 +194,108 @@ async function connectToWhatsApp() {
                 case 'help':
                     const menuText = `*🤖 BOT MENU 🤖*\n\n` +
                                      `* !menu* - Menampilkan menu ini\n` +
+                                     `* !setting* - Lihat status fitur bot\n` +
                                      `* !ai <teks>* - Tanya AI\n` +
                                      `* !sticker* - Buat stiker\n` +
                                      `* !ping* - Cek status bot\n` +
                                      `* !runtime* - Cek info sistem & server\n` +
                                      `* !tagall* - Tag semua member grup\n\n` +
-                                     `_Bot ini juga dilengkapi fitur Auto Welcome & Leave otomatis._`;
+                                     `*⚙️ Pengaturan Admin:*\n` +
+                                     `* !welcome on/off* - Atur pesan selamat datang\n` +
+                                     `* !leave on/off* - Atur pesan keluar`;
                     await sock.sendMessage(sender, { text: menuText }, { quoted: msg });
                     break;
 
+                // --- PENGATURAN FITUR ---
+                case 'setting':
+                case 'settings':
+                    const settingText = `⚙️ *PENGATURAN BOT*\n\n` +
+                                        `👋 Welcome Msg : ${botSettings.welcome ? '✅ ON' : '❌ OFF'}\n` +
+                                        `🚪 Leave Msg   : ${botSettings.leave ? '✅ ON' : '❌ OFF'}\n\n` +
+                                        `_Ketik !welcome off atau !leave off untuk mematikan._`;
+                    await sock.sendMessage(sender, { text: settingText }, { quoted: msg });
+                    break;
+
+                case 'welcome':
+                    if (args[0] === 'on') {
+                        botSettings.welcome = true; saveSettings();
+                        await sock.sendMessage(sender, { text: '✅ Fitur Welcome Message berhasil DIAKTIFKAN!' }, { quoted: msg });
+                    } else if (args[0] === 'off') {
+                        botSettings.welcome = false; saveSettings();
+                        await sock.sendMessage(sender, { text: '❌ Fitur Welcome Message telah DINONAKTIFKAN!' }, { quoted: msg });
+                    } else {
+                        await sock.sendMessage(sender, { text: '⚠️ Format salah. Gunakan: *!welcome on* atau *!welcome off*' }, { quoted: msg });
+                    }
+                    break;
+
+                case 'leave':
+                    if (args[0] === 'on') {
+                        botSettings.leave = true; saveSettings();
+                        await sock.sendMessage(sender, { text: '✅ Fitur Leave Message berhasil DIAKTIFKAN!' }, { quoted: msg });
+                    } else if (args[0] === 'off') {
+                        botSettings.leave = false; saveSettings();
+                        await sock.sendMessage(sender, { text: '❌ Fitur Leave Message telah DINONAKTIFKAN!' }, { quoted: msg });
+                    } else {
+                        await sock.sendMessage(sender, { text: '⚠️ Format salah. Gunakan: *!leave on* atau *!leave off*' }, { quoted: msg });
+                    }
+                    break;
+                // --------------------------
+
                 case 'ping':
-                    // Hitung kecepatan respon (Ping)
                     const messageTime = msg.messageTimestamp * 1000;
                     const pingSpeed = Date.now() - messageTime;
-                    
-                    // Hitung total Uptime Bot (sudah berapa lama bot menyala)
-                    const uptime = process.uptime();
-                    const days = Math.floor(uptime / 86400);
-                    const hours = Math.floor((uptime % 86400) / 3600);
-                    const minutes = Math.floor((uptime % 3600) / 60);
-                    const seconds = Math.floor(uptime % 60);
-                    
-                    const uptimeString = `${days > 0 ? `${days} hari, ` : ''}${hours} jam, ${minutes} menit, ${seconds} detik`;
-
-                    const pingReply = `🏓 *Pong!*\n\n` +
-                                      `⚡ *Kecepatan:* ${pingSpeed} ms\n` +
-                                      `⏱️ *Bot Aktif:* ${uptimeString}`;
-
-                    await sock.sendMessage(sender, { text: pingReply }, { quoted: msg });
+                    await sock.sendMessage(sender, { text: `🏓 *Pong!*\n⚡ *Kecepatan:* ${pingSpeed} ms` }, { quoted: msg });
                     break;
 
                 case 'runtime':
-                    // 1. Kalkulasi Uptime ke format HH:MM:SS
+                    // Kalkulasi Uptime
                     const uptimeSec = process.uptime();
                     const rHours = Math.floor(uptimeSec / 3600).toString().padStart(2, '0');
                     const rMinutes = Math.floor((uptimeSec % 3600) / 60).toString().padStart(2, '0');
                     const rSeconds = Math.floor(uptimeSec % 60).toString().padStart(2, '0');
+                    
                     const formattedUptime = `${rHours}:${rMinutes}:${rSeconds}`;
+                    const relativeText = getRelativeTime(uptimeSec);
+                    const startTimeString = formatWITA(botStartTime);
 
-                    // 2. Kalkulasi Start Time (Unix Timestamp)
-                    const startTimestamp = Math.floor((Date.now() - (uptimeSec * 1000)) / 1000);
-
-                    // 3. Ambil data Penggunaan RAM Node.js
+                    // Memori & Spek
                     const memUsage = process.memoryUsage();
                     const rssMB = (memUsage.rss / 1024 / 1024).toFixed(2);
                     const heapMB = (memUsage.heapUsed / 1024 / 1024).toFixed(2);
 
-                    // 4. Ambil Spesifikasi Hardware Server (VPS)
                     const osType = os.type();
                     const osRelease = os.release();
                     const osPlatform = os.platform();
                     const osArch = os.arch();
                     const cpus = os.cpus();
-                    const cpuModel = cpus[0].model.trim();
-                    const cpuSpeed = cpus[0].speed;
+                    const cpuModel = cpus[0]?.model.trim() || 'Unknown CPU';
+                    const cpuSpeed = cpus[0]?.speed || 0;
                     const totalRamGB = (os.totalmem() / 1024 / 1024 / 1024).toFixed(2);
                     const freeRamGB = (os.freemem() / 1024 / 1024 / 1024).toFixed(2);
 
-                    // 5. Hitung jumlah Grup
+                    // Hitung jumlah Grup
                     let groupCount = 0;
                     try {
                         const groups = await sock.groupFetchAllParticipating();
                         groupCount = Object.keys(groups).length;
                     } catch (e) {
-                        groupCount = 'Error/Tidak diketahui';
+                        groupCount = 'Error';
                     }
 
-                    // Format Pesan
+                    // Format Pesan (Sesuai Gambar User)
                     const runtimeReply = `⏱️ *Runtime Bot*\n` +
-                                         `* Uptime        : ${formattedUptime} (sejak <t:${startTimestamp}:R>)\n` +
-                                         `* Start Time    : <t:${startTimestamp}:F>\n` +
-                                         `* Grup        : ${groupCount}\n` +
-                                         `* Node.js       : ${process.version}\n` +
-                                         `* Memory (RSS)  : ${rssMB} MB\n` +
-                                         `* Heap Used     : ${heapMB} MB\n\n` +
+                                         `• Uptime      : ${formattedUptime} (sejak ${relativeText})\n` +
+                                         `• Start Time  : ${startTimeString} WITA\n` +
+                                         `• Guilds      : ${groupCount}\n` +
+                                         `• Node.js     : ${process.version}\n` +
+                                         `• Memory (RSS): ${rssMB} MB\n` +
+                                         `• Heap Used   : ${heapMB} MB\n\n` +
                                          `🖥️ *Spesifikasi Core VPS*\n` +
-                                         `* OS            : ${osType} ${osRelease} (${osPlatform}/${osArch})\n` +
-                                         `* CPU           : ${cpuModel}\n` +
-                                         `* CPU Cores     : ${cpus.length} cores @ ${cpuSpeed} MHz\n` +
-                                         `* RAM (Total)   : ${totalRamGB} GB\n` +
-                                         `* RAM (Free)    : ${freeRamGB} GB`;
+                                         `• OS          : ${osType} ${osRelease} (${osPlatform}/${osArch})\n` +
+                                         `• CPU         : ${cpuModel}\n` +
+                                         `• CPU Cores   : ${cpus.length} cores @ ${cpuSpeed} MHz\n` +
+                                         `• RAM (Total) : ${totalRamGB} GB\n` +
+                                         `• RAM (Free)  : ${freeRamGB} GB`;
 
                     await sock.sendMessage(sender, { text: runtimeReply }, { quoted: msg });
                     break;
