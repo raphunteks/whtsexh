@@ -114,6 +114,13 @@ async function connectToWhatsApp() {
                 console.log(`\n====================================================`);
                 console.log(`🔑 KODE PAIRING ANDA: ${code}`);
                 console.log(`====================================================\n`);
+                console.log(`Cara Login:`);
+                console.log(`1. Buka WhatsApp di HP Anda (Nomor Bos).`);
+                console.log(`2. Ketuk ikon titik tiga (Opsi lainnya) > Perangkat Tertaut.`);
+                console.log(`3. Ketuk 'Tautkan Perangkat'.`);
+                console.log(`4. Pilih 'Tautkan dengan nomor telepon saja'.`);
+                console.log(`5. Masukkan kode 8 digit di atas.`);
+                console.log(`====================================================\n`);
             } catch (err) {
                 console.error('Gagal meminta kode pairing:', err);
             }
