@@ -45,8 +45,8 @@ process.on('unhandledRejection', function (reason, p) {
 // ==========================================
 // PENGATURAN PAIRING CODE
 // ==========================================
-// GANTI NOMOR DI BAWAH INI DENGAN NOMOR HP BOT ANDA!
-const phoneNumber = "6285338922586"; // Ganti dengan nomor bot Anda
+// NOMOR HP BOT ANDA SUDAH DIPERBARUI DI SINI
+const phoneNumber = "6285338922586"; 
 const usePairingCode = true;
 // ==========================================
 
