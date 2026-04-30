@@ -12,17 +12,17 @@ import handleStickerCommand from './src/commands/sticker.js';
 const logger = pino({ level: 'silent' }); 
 
 // ==========================================
-// ANTI-CRASH HANDLER
+// ANTI-CRASH HANDLER (Diperkuat)
 // ==========================================
 process.on('uncaughtException', function (err) {
     let e = String(err);
-    if (e.includes('conflict') || e.includes('timeout') || e.includes('not-authorized') || e.includes('Bad MAC')) return;
+    if (e.includes('conflict') || e.includes('timeout') || e.includes('not-authorized') || e.includes('Bad MAC') || e.includes('EADDRINUSE')) return;
     console.log('Caught exception: ', err);
 });
 
 process.on('unhandledRejection', function (reason, p) {
     let e = String(reason);
-    if (e.includes('conflict') || e.includes('timeout') || e.includes('not-authorized') || e.includes('Bad MAC')) return;
+    if (e.includes('conflict') || e.includes('timeout') || e.includes('not-authorized') || e.includes('Bad MAC') || e.includes('EADDRINUSE')) return;
     console.log('Unhandled Rejection at: Promise ', p, ' reason: ', reason);
 });
 // ==========================================
@@ -34,13 +34,13 @@ const phoneNumber = "6285338922586";
 const usePairingCode = true;
 const botStartTime = new Date(); // Mencatat waktu script dijalankan
 
-// Sistem Database Setting Sederhana (disimpan di folder session agar persisten di Railway)
-const settingsFile = './session/settings.json';
+const sessionPath = './session';
+const settingsFile = `${sessionPath}/settings.json`;
 let botSettings = { welcome: true, leave: true };
 
 // Buat folder session jika belum ada
-if (!fs.existsSync('./session')) {
-    fs.mkdirSync('./session', { recursive: true });
+if (!fs.existsSync(sessionPath)) {
+    fs.mkdirSync(sessionPath, { recursive: true });
 }
 
 // Load setting jika file sudah ada
@@ -57,7 +57,27 @@ function saveSettings() {
     fs.writeFileSync(settingsFile, JSON.stringify(botSettings, null, 2));
 }
 
-// Helper untuk format WITA & Relative Time
+// ==========================================
+// FUNGSI PENTING: AUTO-DELETE SESSION (LOGOUT MANUAL)
+// ==========================================
+function clearZombieSession() {
+    console.log('\n⚠️ MENGHAPUS SESI LAMA YANG LOGOUT/KORUP...');
+    if (fs.existsSync(sessionPath)) {
+        fs.readdirSync(sessionPath).forEach(file => {
+            // Hapus semua file KECUALI settings.json agar pengaturan Welcome/Leave tidak hilang
+            if (file !== 'settings.json') {
+                try {
+                    fs.unlinkSync(`${sessionPath}/${file}`);
+                } catch (e) {}
+            }
+        });
+        console.log('✅ Data sesi lama berhasil dibersihkan! Memulai ulang sistem...\n');
+    }
+}
+
+// ==========================================
+// Helper Format Waktu & Tanggal
+// ==========================================
 function formatWITA(dateObj) {
     return new Intl.DateTimeFormat('en-US', {
         timeZone: 'Asia/Makassar',
@@ -85,7 +105,7 @@ function getRelativeTime(seconds) {
 async function connectToWhatsApp() {
     console.log('🔄 Memulai koneksi ke WhatsApp...');
     
-    const { state, saveCreds } = await useMultiFileAuthState('session');
+    const { state, saveCreds } = await useMultiFileAuthState(sessionPath);
     const { version, isLatest } = await fetchLatestBaileysVersion();
     
     console.log(`📡 Menggunakan WA v${version.join('.')}, isLatest: ${isLatest}`);
@@ -113,7 +133,7 @@ async function connectToWhatsApp() {
                 const code = await sock.requestPairingCode(phoneNumber);
                 console.log(`\n====================================================`);
                 console.log(`🔑 KODE PAIRING ANDA: ${code}`);
-                console.log(`====================================================\n`);
+                console.log(`====================================================`);
                 console.log(`Cara Login:`);
                 console.log(`1. Buka WhatsApp di HP Anda (Nomor Bos).`);
                 console.log(`2. Ketuk ikon titik tiga (Opsi lainnya) > Perangkat Tertaut.`);
@@ -122,7 +142,7 @@ async function connectToWhatsApp() {
                 console.log(`5. Masukkan kode 8 digit di atas.`);
                 console.log(`====================================================\n`);
             } catch (err) {
-                console.error('Gagal meminta kode pairing:', err);
+                console.error('Gagal meminta kode pairing. Sesi mungkin bentrok.', err);
             }
         }, 3000);
     }
@@ -130,9 +150,21 @@ async function connectToWhatsApp() {
     sock.ev.on('connection.update', (update) => {
         const { connection, lastDisconnect } = update;
         if (connection === 'close') {
-            const shouldReconnect = (lastDisconnect.error instanceof Boom)?.output?.statusCode !== DisconnectReason.loggedOut;
-            console.log('Koneksi terputus, reconnecting:', shouldReconnect);
-            if (shouldReconnect) connectToWhatsApp();
+            // Deteksi Status Code dari Disconnect
+            const statusCode = lastDisconnect?.error?.output?.statusCode || lastDisconnect?.error?.statusCode;
+            const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
+            
+            console.log(`Koneksi terputus. Status Code: ${statusCode}. Reconnecting: ${shouldReconnect}`);
+            
+            if (shouldReconnect) {
+                // JEDA 3 DETIK (Mencegah Crash Loop / Stopping Container di Railway)
+                setTimeout(() => connectToWhatsApp(), 3000);
+            } else {
+                // JIKA TERDETEKSI LOGOUT MANUAL (Status 401 / loggedOut)
+                console.log('❌ Perangkat telah dikeluarkan (Logged Out) secara manual.');
+                clearZombieSession();
+                setTimeout(() => connectToWhatsApp(), 3000);
+            }
         } else if (connection === 'open') {
             console.log('✅ Bot berhasil terhubung ke WhatsApp!');
         }
