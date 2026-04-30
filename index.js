@@ -2,6 +2,8 @@ import { makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaile
 import { Boom } from '@hapi/boom';
 import pino from 'pino';
 import fs from 'fs';
+import process from 'process';
+import os from 'os'; // Modul OS ditambahkan untuk membaca spesifikasi server
 
 // Import Commands (Sistem Modular Sederhana)
 import handleAiCommand from './src/commands/ai.js';
@@ -194,13 +196,85 @@ async function connectToWhatsApp() {
                                      `* !ai <teks>* - Tanya AI\n` +
                                      `* !sticker* - Buat stiker\n` +
                                      `* !ping* - Cek status bot\n` +
+                                     `* !runtime* - Cek info sistem & server\n` +
                                      `* !tagall* - Tag semua member grup\n\n` +
                                      `_Bot ini juga dilengkapi fitur Auto Welcome & Leave otomatis._`;
                     await sock.sendMessage(sender, { text: menuText }, { quoted: msg });
                     break;
 
                 case 'ping':
-                    await sock.sendMessage(sender, { text: '🏓 Pong! Bot aktif dan siap melayani.' }, { quoted: msg });
+                    // Hitung kecepatan respon (Ping)
+                    const messageTime = msg.messageTimestamp * 1000;
+                    const pingSpeed = Date.now() - messageTime;
+                    
+                    // Hitung total Uptime Bot (sudah berapa lama bot menyala)
+                    const uptime = process.uptime();
+                    const days = Math.floor(uptime / 86400);
+                    const hours = Math.floor((uptime % 86400) / 3600);
+                    const minutes = Math.floor((uptime % 3600) / 60);
+                    const seconds = Math.floor(uptime % 60);
+                    
+                    const uptimeString = `${days > 0 ? `${days} hari, ` : ''}${hours} jam, ${minutes} menit, ${seconds} detik`;
+
+                    const pingReply = `🏓 *Pong!*\n\n` +
+                                      `⚡ *Kecepatan:* ${pingSpeed} ms\n` +
+                                      `⏱️ *Bot Aktif:* ${uptimeString}`;
+
+                    await sock.sendMessage(sender, { text: pingReply }, { quoted: msg });
+                    break;
+
+                case 'runtime':
+                    // 1. Kalkulasi Uptime ke format HH:MM:SS
+                    const uptimeSec = process.uptime();
+                    const rHours = Math.floor(uptimeSec / 3600).toString().padStart(2, '0');
+                    const rMinutes = Math.floor((uptimeSec % 3600) / 60).toString().padStart(2, '0');
+                    const rSeconds = Math.floor(uptimeSec % 60).toString().padStart(2, '0');
+                    const formattedUptime = `${rHours}:${rMinutes}:${rSeconds}`;
+
+                    // 2. Kalkulasi Start Time (Unix Timestamp)
+                    const startTimestamp = Math.floor((Date.now() - (uptimeSec * 1000)) / 1000);
+
+                    // 3. Ambil data Penggunaan RAM Node.js
+                    const memUsage = process.memoryUsage();
+                    const rssMB = (memUsage.rss / 1024 / 1024).toFixed(2);
+                    const heapMB = (memUsage.heapUsed / 1024 / 1024).toFixed(2);
+
+                    // 4. Ambil Spesifikasi Hardware Server (VPS)
+                    const osType = os.type();
+                    const osRelease = os.release();
+                    const osPlatform = os.platform();
+                    const osArch = os.arch();
+                    const cpus = os.cpus();
+                    const cpuModel = cpus[0].model.trim();
+                    const cpuSpeed = cpus[0].speed;
+                    const totalRamGB = (os.totalmem() / 1024 / 1024 / 1024).toFixed(2);
+                    const freeRamGB = (os.freemem() / 1024 / 1024 / 1024).toFixed(2);
+
+                    // 5. Hitung jumlah Grup
+                    let groupCount = 0;
+                    try {
+                        const groups = await sock.groupFetchAllParticipating();
+                        groupCount = Object.keys(groups).length;
+                    } catch (e) {
+                        groupCount = 'Error/Tidak diketahui';
+                    }
+
+                    // Format Pesan
+                    const runtimeReply = `⏱️ *Runtime Bot*\n` +
+                                         `* Uptime        : ${formattedUptime} (sejak <t:${startTimestamp}:R>)\n` +
+                                         `* Start Time    : <t:${startTimestamp}:F>\n` +
+                                         `* Grup        : ${groupCount}\n` +
+                                         `* Node.js       : ${process.version}\n` +
+                                         `* Memory (RSS)  : ${rssMB} MB\n` +
+                                         `* Heap Used     : ${heapMB} MB\n\n` +
+                                         `🖥️ *Spesifikasi Core VPS*\n` +
+                                         `* OS            : ${osType} ${osRelease} (${osPlatform}/${osArch})\n` +
+                                         `* CPU           : ${cpuModel}\n` +
+                                         `* CPU Cores     : ${cpus.length} cores @ ${cpuSpeed} MHz\n` +
+                                         `* RAM (Total)   : ${totalRamGB} GB\n` +
+                                         `* RAM (Free)    : ${freeRamGB} GB`;
+
+                    await sock.sendMessage(sender, { text: runtimeReply }, { quoted: msg });
                     break;
 
                 case 'ai':
